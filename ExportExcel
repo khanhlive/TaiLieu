@@ -1,0 +1,2085 @@
+ClosedXML.Excel;
+using Ionic.Zip;
+using Newtonsoft.Json;
+using NPOI.HSSF.UserModel;
+using NPOI.SS.UserModel;
+using Spire.Xls;
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.OleDb;
+using System.Drawing;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Web;
+
+
+#region Excel export Engine
+
+namespace Core
+{
+    public class WorkbookManagerCreator
+    {
+        private List<WorkbookTemplate> workbookTemplates;
+        private string _name;
+        public WorkbookManagerCreator(string name)
+        {
+            this._name = name;
+        }
+        public WorkbookManagerCreator()
+        {
+        }
+        public void SetName(string name)
+        {
+            this._name = name;
+        }
+        public string GetName()
+        {
+            return this._name;
+        }
+        public void Export()
+        {
+            try
+            {
+                if (this.workbookTemplates != null && this.workbookTemplates.Count > 0)
+                {
+                    string folderPath = "";
+                    try
+                    {
+                        folderPath = string.Format("{0}\\{1}", HttpContext.Current.Server.MapPath("~") + "\\Admin\\ExportTemps", Guid.NewGuid().ToString());
+                        this.CreateFolder(folderPath);
+                        foreach (WorkbookTemplate item in workbookTemplates)
+                        {
+                            item.Export(folderPath);
+                        }
+                        this.ZipFilevsDownload(folderPath, 0, this._name.ToString(), "");
+                    }
+                    catch (Exception e)
+                    {
+
+                    }
+                    finally
+                    {
+                        if (Directory.Exists(folderPath))
+                            this.DeleteFolder(folderPath);
+                    }
+
+                }
+            }
+            catch (Exception)
+            {
+
+            }
+
+        }
+
+        public void AddWorkBook(WorkbookTemplate workbook)
+        {
+            try
+            {
+                if (this.workbookTemplates == null)
+                    this.workbookTemplates = new List<WorkbookTemplate>();
+                this.workbookTemplates.Add(workbook);
+            }
+            catch (Exception)
+            {
+
+            }
+        }
+
+        #region zip vs download file
+
+        private bool CreateFolder(string path)
+        {
+            try
+            {
+                if (!Directory.Exists(path))
+                    Directory.CreateDirectory(path);
+                return true;
+            }
+            catch
+            {
+            }
+            return false;
+        }
+        private void DeleteFolder(string path)
+        {
+            try
+            {
+                Directory.Delete(path, true);
+            }
+            catch (Exception ex)
+            {
+
+            }
+        }
+        public static string RemoveUnicode(string s)
+        {
+            Regex regex = new Regex("\\p{IsCombiningDiacriticalMarks}+");
+            string temp = s.Normalize(NormalizationForm.FormD);
+            return regex.Replace(temp, String.Empty).Replace('\u0111', 'd').Replace('\u0110', 'D');
+        }
+
+        private void ZipFilevsDownload(string pathDes, int type, string ObjectName, string password)
+        {
+            //1 - Zip File; 0 - Zip folder
+            try
+            {
+                string filename = string.Format("{0}.zip", ObjectName);
+                HttpContext.Current.Response.Clear();
+                HttpContext.Current.Response.ContentType = "application/zip";
+                HttpContext.Current.Response.AddHeader("Content-Disposition", "attachment;filename=\"" + filename + "\"");
+                using (ZipFile zip = new ZipFile())
+                {
+                    if (password.Trim().Replace("'", "") != string.Empty)
+                        zip.Password = password;
+                    if (type == 1)
+                        zip.AddEntry(Path.GetFileName(pathDes), File.ReadAllBytes(pathDes));
+                    else
+                        zip.AddDirectory(Path.GetDirectoryName(pathDes + "\\"));
+                    zip.Save(HttpContext.Current.Response.OutputStream);
+                }
+                DeleteFolder(pathDes);
+                HttpContext.Current.Response.Flush();
+                HttpContext.Current.Response.End();
+            }
+            catch (Exception ex)
+            {
+                DeleteFolder(pathDes);
+                //AdminTool at = new AdminTool(ConfigurationManager.ConnectionStrings["MainConnectionString"].ToString());
+                //at.ThrowEngineException("InLichCongTac.aspx", ex.Message, "ZipFilevsDownload");
+            }
+        }
+
+        #endregion
+    }
+
+    /// <summary>
+    /// Quản lý, xây dựng workbook
+    /// </summary>
+    public class WorkbookTemplate
+    {
+        private string _filename;
+        List<IWorksheetTemplate> sheetTemplate;
+        private ExportExcelFileType _fileType;
+        XLWorkbook workbook;
+
+        /// <summary>
+        /// Tên file khi xuất dữ liệu
+        /// </summary>
+        /// <param name="filename"></param>
+        public WorkbookTemplate(string filename)
+        {
+            this.sheetTemplate = new List<IWorksheetTemplate>();
+            this._fileType = ExportExcelFileType.OneFileMultiSheet;
+            this._filename = filename;
+        }
+
+        /// <summary>
+        /// Thiết lập kiểu in dữ liệu
+        /// </summary>
+        /// <param name="_fileType"></param>
+        public void SetExportType(ExportExcelFileType _fileType)
+        {
+            this._fileType = _fileType;
+        }
+
+        /// <summary>
+        /// Thực hiện xuất dữ liệu
+        /// </summary>
+        public void Export(string folderPath)
+        {
+            //if (this._fileType == ExportExcelFileType.OneFileMultiSheet)
+            //{
+            using (this.workbook = new XLWorkbook())
+            {
+                foreach (var item in sheetTemplate)
+                {
+                    var sheet = this.workbook.AddWorksheet(item.Name);
+                    sheet = item.GetTemplate(sheet);
+                }
+                this.workbook.SaveAs(string.Format("{0}\\{1}.xlsx", folderPath, this._filename));
+                //this.Response();
+            }
+            //}
+            //else if (this._fileType == ExportExcelFileType.MultiFile)
+            //{
+            //    string destFolder = folderPath;//HttpContext.Current.Server.MapPath("~") + "\\Admin\\ExportTemps\\";
+            //    //string destFolderReport = destFolder + "_" + Guid.NewGuid() + "\\";
+            //    CreateFolder(destFolder);
+            //    foreach (var item in sheetTemplate)
+            //    {
+            //        string _filename_xlsx = string.Format("{0}{1}.xlsx", destFolder, item.Name);
+            //        using (this.workbook = new XLWorkbook())
+            //        {
+            //            var sheet = this.workbook.AddWorksheet(item.Name);
+            //            sheet = item.GetTemplate(sheet);
+            //            this.workbook.SaveAs(_filename_xlsx);
+            //        }
+            //    }
+            //    //this.ZipFilevsDownload(destFolderReport, 0, "Danh_sach_hoc_sinh", "");
+            //}
+
+        }
+
+        /// <summary>
+        /// Xuất file đến client
+        /// </summary>
+        protected virtual void Response()
+        {
+            try
+            {
+                HttpResponse _response = HttpContext.Current.Response;
+                _response.ClearContent();
+                _response.Buffer = true;
+                _response.AddHeader("content-disposition", string.Format("attachment; filename={0}.xlsx", this._filename ?? (Guid.NewGuid()).ToString()));
+                _response.ContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+                _response.Charset = "";
+                using (MemoryStream MyMemoryStream = new MemoryStream())
+                {
+                    workbook.SaveAs(MyMemoryStream);
+                    MyMemoryStream.WriteTo(_response.OutputStream);
+                    _response.Flush();
+                    _response.Close();
+                    HttpContext.Current.ApplicationInstance.CompleteRequest();
+                }
+            }
+            catch (Exception ex)
+            {
+
+            }
+
+        }
+
+        /// <summary>
+        /// Thêm một sheet mới vào workbook
+        /// </summary>
+        /// <param name="sheet">Cấu hình worksheet</param>
+        public void AddSheet(IWorksheetTemplate sheet)
+        {
+            this.sheetTemplate.Add(sheet);
+        }
+
+        #region zip vs download file
+
+        private bool CreateFolder(string path)
+        {
+            try
+            {
+                if (!Directory.Exists(path))
+                    Directory.CreateDirectory(path);
+                return true;
+            }
+            catch
+            {
+            }
+            return false;
+        }
+        private static void DeleteFolder(string path)
+        {
+            try
+            {
+                Directory.Delete(path, true);
+            }
+            catch (Exception ex)
+            {
+
+            }
+        }
+        public static string RemoveUnicode(string s)
+        {
+            Regex regex = new Regex("\\p{IsCombiningDiacriticalMarks}+");
+            string temp = s.Normalize(NormalizationForm.FormD);
+            return regex.Replace(temp, String.Empty).Replace('\u0111', 'd').Replace('\u0110', 'D');
+        }
+
+        private void ZipFilevsDownload(string pathDes, int type, string ObjectName, string password)
+        {
+            //1 - Zip File; 0 - Zip folder
+            try
+            {
+                string filename = string.Format("{0}.zip", ObjectName);
+                HttpContext.Current.Response.Clear();
+                HttpContext.Current.Response.ContentType = "application/zip";
+                HttpContext.Current.Response.AddHeader("Content-Disposition", "attachment;filename=\"" + filename + "\"");
+                using (ZipFile zip = new ZipFile())
+                {
+                    if (password.Trim().Replace("'", "") != string.Empty)
+                        zip.Password = password;
+                    if (type == 1)
+                        zip.AddEntry(Path.GetFileName(pathDes), File.ReadAllBytes(pathDes));
+                    else
+                        zip.AddDirectory(Path.GetDirectoryName(pathDes + "\\"));
+                    zip.Save(HttpContext.Current.Response.OutputStream);
+                }
+                DeleteFolder(pathDes);
+                HttpContext.Current.Response.Flush();
+                HttpContext.Current.Response.End();
+            }
+            catch (Exception ex)
+            {
+                DeleteFolder(pathDes);
+                //AdminTool at = new AdminTool(ConfigurationManager.ConnectionStrings["MainConnectionString"].ToString());
+                //at.ThrowEngineException("InLichCongTac.aspx", ex.Message, "ZipFilevsDownload");
+            }
+        }
+
+        #endregion
+    }
+
+    public enum ExportExcelFileType
+    {
+        //OneFileOneSheet,
+        OneFileMultiSheet,
+        MultiFile
+    }
+
+    public enum ExportExcelPageSize
+    {
+        A2, A3, A4
+    }
+
+    /// <summary>
+    /// Giao diện sheet excel đã dựng sẵn
+    /// </summary>
+    public class WorksheetLayoutReport : WorksheetTemplateBase
+    {
+        public WorksheetLayoutReport(WorksheetConfig sheetConfig)
+            : base(sheetConfig)
+        {
+            this.SetStyle();
+        }
+
+        protected ExcelColumnCollection columns;
+
+        public void SetColumns(ExcelColumnCollection _columns)
+        {
+            if (_columns != null)
+            {
+
+                columns = _columns;
+                this.setting.TableHeader.ColumnsWidth = _columns.GetColumns().ToArray();
+                this.setting.TableHeader.ColumnCollection = _columns;
+            }
+        }
+        protected ExcelStyle styleheader;
+        protected ExcelStyle styletitle;
+        protected ExcelStyle styleTableheader;
+        protected ExcelStyle stylesubtitle;
+        protected ExcelStyle styleSignature;
+        protected ExcelStyle styleSignature2;
+
+        public void SetAdjustToContents(bool _adjustToContents)
+        {
+            this.setting.Content.AdjustToContent = _adjustToContents;
+        }
+
+        protected override void SetStyle()
+        {
+            this.worksheet.Style.Font.FontName = styleBase.FontName;
+            this.worksheet.Style.Font.FontSize = styleBase.FontSize;
+        }
+
+        public void SetFontName(string fontName)
+        {
+            if (this.styleBase == null)
+                this.styleBase = new ExcelStyle();
+            this.styleBase.FontName = fontName;
+            SetStyleLayout();
+        }
+
+        public void SetFontSize(double fontSize)
+        {
+            if (this.styleBase == null)
+                this.styleBase = new ExcelStyle();
+            this.styleBase.FontSize = fontSize;
+            SetStyleLayout();
+        }
+
+        private bool CheckString(string text)
+        {
+            return (!string.IsNullOrWhiteSpace(text) && !string.IsNullOrEmpty(text));
+        }
+
+        private void SetStyleLayout()
+        {
+            WorksheetConfig newSetting = new WorksheetConfig();
+
+            //newSetting = this.setting;
+            //set page
+            newSetting.Content.BorderStyle = XLBorderStyleValues.Thin;
+            newSetting.ShowGridLine = false;
+            newSetting.Content.WrapText = false;
+            newSetting.TableHeader.Style.Bold = false;
+            newSetting.PageSetup.PageOrientation = XLPageOrientation.Landscape;
+            newSetting.PageSetup.PaperSize = XLPaperSize.A4Paper;
+
+            //set style base
+            if (styleBase == null)
+                styleBase = new ExcelStyle();
+            styleBase.Horizontal = XLAlignmentHorizontalValues.Center;
+            styleBase.Bold = true;
+
+
+
+            //styleheader
+            styleheader = styleBase.Clone();
+            styleheader.Bold = false;
+
+            //style title
+            styletitle = styleBase.Clone();
+            styletitle.Horizontal = XLAlignmentHorizontalValues.Center;
+            styletitle.FontSize = 18;
+            styletitle.FontColor = Color.Blue;
+
+            //style table header
+            styleTableheader = styleBase.Clone();
+            styleTableheader.Horizontal = XLAlignmentHorizontalValues.Center;
+            newSetting.TableHeader.Style = styleTableheader;
+
+            //style sub title
+            stylesubtitle = styleBase.Clone();
+            stylesubtitle.Horizontal = XLAlignmentHorizontalValues.Center;
+            stylesubtitle.Bold = false;
+            stylesubtitle.FontSize = stylesubtitle.FontSize - 1;
+            stylesubtitle.Italic = true;
+            newSetting.Title.SubTitle.Style = stylesubtitle;
+            newSetting.Title.Title.Style = styletitle;
+
+            //style signature left
+            this.styleSignature = styleBase.Clone();
+            this.styleSignature.Bold = false;
+            this.styleSignature.Horizontal = XLAlignmentHorizontalValues.Center;
+
+            this.setting = newSetting;
+        }
+
+        public void SetName(string name)
+        {
+            this.setting.Name = name;
+            this.name = name;
+        }
+
+        public void AddHeaderLeft(string text, double width = 0)
+        {
+            if (this.CheckString(text))
+            {
+                string[] headerLeft = text.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var item1 in headerLeft)
+                {
+                    this.setting.Header.HeaderLeft.Add(new TextComponent { Text = item1, Style = this.styleheader, Width = width });
+                }
+                //this.setting.Header.HeaderLeft.Add(new TextComponent { Text = text, Style = this.styleheader, Width = width });
+            }
+        }
+
+        public void AddHeaderCenter(string text)
+        {
+            if (this.CheckString(text))
+            {
+                string[] headerLeft = text.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var item1 in headerLeft)
+                {
+                    this.setting.Header.HeaderCenter.Add(new TextComponent { Text = item1, Style = this.styleheader });
+                }
+                //this.setting.Header.HeaderCenter.Add(new TextComponent { Text = text, Style = this.styleheader });
+            }
+        }
+
+        public void AddSignatureLeft(string text, double width = 0)
+        {
+            if (this.CheckString(text))
+            {
+                string[] headerLeft = text.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var item1 in headerLeft)
+                {
+                    this.setting.Signature.SignatureLeft.Add(new TextComponent { Text = item1, Style = this.styleheader, Width = width });
+                }
+                //this.setting.Signature.SignatureLeft.Add(new TextComponent { Text = text, Style = this.styleSignature, Width = width });
+            }
+        }
+
+        public void AddSignatureRight(string text, double width = 0)
+        {
+            if (this.setting.Signature.SignatureRight.Count == 0)
+            {
+                if (this.CheckString(text))
+                {
+                    string[] headerLeft = text.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var item1 in headerLeft)
+                    {
+                        this.setting.Signature.SignatureRight.Add(new TextComponent { Text = item1, Style = this.styleheader, Width = width });
+                    }
+                }
+                //this.setting.Signature.SignatureRight.Add(new TextComponent { Text = text, Style = this.styleSignature, Width = width });
+            }
+            else
+            {
+                if (this.CheckString(text))
+                {
+                    ExcelStyle style = this.styleSignature.Clone();
+                    style.Bold = true;
+                    string[] headerLeft = text.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var item1 in headerLeft)
+                    {
+                        this.setting.Signature.SignatureRight.Add(new TextComponent { Text = item1, Style = this.styleheader, Width = width });
+                    }
+                    //this.setting.Signature.SignatureRight.Add(new TextComponent { Text = text, Style = style });
+                }
+            }
+        }
+
+        public void AddSignatureCenter(string text)
+        {
+            if (this.setting.Signature.SignatureRight.Count == 0)
+            {
+                if (this.CheckString(text))
+                {
+                    string[] headerLeft = text.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var item1 in headerLeft)
+                    {
+                        this.setting.Signature.SignatureCenter.Add(new TextComponent { Text = item1, Style = this.styleheader });
+                    }
+                    //this.setting.Signature.SignatureRight.Add(new TextComponent { Text = text, Style = this.styleSignature });
+                }
+            }
+            else
+            {
+                if (this.CheckString(text))
+                {
+                    ExcelStyle style = this.styleSignature.Clone();
+                    string[] headerLeft = text.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var item1 in headerLeft)
+                    {
+                        this.setting.Signature.SignatureCenter.Add(new TextComponent { Text = item1, Style = this.styleheader });
+                    }
+                    //this.setting.Signature.SignatureRight.Add(new TextComponent { Text = text, Style = style });
+                }
+            }
+        }
+
+        public void AddHeaderRight(string text, double width = 0)
+        {
+            if (this.CheckString(text))
+            {
+                ExcelStyle style = this.styleheader.Clone();
+                style.Bold = true;
+                string[] header = text.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var item1 in header)
+                {
+                    this.setting.Header.HeaderRight.Add(new TextComponent { Text = item1, Style = style, Width = width });
+                }
+            }
+        }
+
+        public void AddHeaderLeft(string text, ExcelStyle style)
+        {
+            if (this.CheckString(text))
+            {
+                string[] headerLeft = text.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var item1 in headerLeft)
+                {
+                    this.setting.Header.HeaderLeft.Add(new TextComponent { Text = item1, Style = style });
+                }
+                //this.setting.Header.HeaderLeft.Add(new TextComponent { Text = text, Style = style });
+            }
+        }
+
+        public void AddHeaderRight(string text, ExcelStyle style)
+        {
+            if (this.CheckString(text))
+            {
+                string[] headerLeft = text.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var item1 in headerLeft)
+                {
+                    this.setting.Header.HeaderRight.Add(new TextComponent { Text = item1, Style = style });
+                }
+                //this.setting.Header.HeaderRight.Add(new TextComponent { Text = text, Style = style });
+            }
+        }
+
+        public void SetTitle(string title)
+        {
+            this.setting.Title.Title.Text = title;
+        }
+
+        public void SetSubTitle(string subTitle)
+        {
+            this.setting.Title.SubTitle.Text = subTitle;
+        }
+
+        public void SetDataSource(DataTable data)
+        {
+            this.setting.DataSource = data;
+        }
+
+        public WorksheetLayoutReport()
+        {
+            this.SetStyleLayout();
+        }
+    }
+
+    /// <summary>
+    /// Sheet layout base
+    /// </summary>
+    public class WorksheetTemplateBase : IWorksheetTemplate
+    {
+        protected ExcelStyle styleBase;
+        protected double PageWidth { get; set; }
+        public WorksheetTemplateBase() : base()
+        {
+
+        }
+        public WorksheetTemplateBase(WorksheetConfig sheetSetting)
+            : base(sheetSetting)
+        {
+        }
+        protected override void SetPage()
+        {
+            try
+            {
+                worksheet.PageSetup.PaperSize = this.setting.PageSetup.PaperSize;
+                worksheet.PageSetup.PageOrientation = this.setting.PageSetup.PageOrientation;
+                //worksheet.PageSetup.AdjustTo(100);
+                worksheet.PageSetup.Margins.Left = this.setting.PageSetup.Margins.Left;
+                worksheet.PageSetup.Margins.Right = this.setting.PageSetup.Margins.Right;
+                worksheet.PageSetup.Margins.Top = this.setting.PageSetup.Margins.Top;
+                worksheet.PageSetup.Margins.Bottom = this.setting.PageSetup.Margins.Bottom;
+                worksheet.PageSetup.Margins.Header = this.setting.PageSetup.Margins.Header;
+                worksheet.PageSetup.Margins.Footer = this.setting.PageSetup.Margins.Footer;
+                worksheet.PageSetup.FitToPages(1, 1);
+            }
+            catch (Exception e)
+            {
+                //Common.log.Error("Setting pagesetup", e);
+            }
+
+        }
+
+        public void SetPageOrientation(XLPageOrientation xLPage)
+        {
+            this.setting.PageSetup.PageOrientation = xLPage;
+        }
+
+        public void SetPageSize(ExportExcelPageSize pageSize)
+        {
+            switch (pageSize)
+            {
+                case ExportExcelPageSize.A2:
+                    this.setting.PageSetup.PaperSize = XLPaperSize.A2Paper;
+                    break;
+                case ExportExcelPageSize.A3:
+                    this.setting.PageSetup.PaperSize = XLPaperSize.A3Paper;
+                    break;
+                case ExportExcelPageSize.A4:
+                    this.setting.PageSetup.PaperSize = XLPaperSize.A4Paper;
+                    break;
+                default:
+                    this.setting.PageSetup.PaperSize = XLPaperSize.A4Paper;
+                    break;
+            }
+        }
+
+        protected override void SetStyle()
+        {
+            try
+            {
+                worksheet.Style = this.worksheet.Style;
+                worksheet.ShowGridLines = this.setting.ShowGridLine;
+            }
+            catch (Exception e)
+            {
+                //Common.log.Error("Set Style", e);
+            }
+
+        }
+
+        protected override void SetHeader()
+        {
+            try
+            {
+                int colLeft = Convert.ToInt32(setting.TableHeader.ColumnsWidth.Length * 2 / 5);
+                int colRight = colLeft + 1;
+                int colSum = setting.TableHeader.ColumnsWidth.Length;
+                if (this.setting.Header.HeaderLeft.Count > 0)
+                {
+                    if (this.setting.Header.HeaderLeft[0].Width != 0)
+                    {
+                        double width = this.PageWidth * this.setting.Header.HeaderLeft[0].Width / 100;
+                        int i = 0;
+                        double sum = 0;
+                        while (sum < width)
+                        {
+                            sum += this.setting.TableHeader.ColumnsWidth[i].Width;
+                            i++;
+                        }
+                        colLeft = i + 1;
+                    }
+                }
+                else
+                {
+                    colLeft = 1;
+                }
+                if (this.setting.Header.HeaderRight.Count > 0)
+                {
+                    if (this.setting.Header.HeaderRight[0].Width != 0)
+                    {
+                        double width = this.PageWidth * this.setting.Header.HeaderRight[0].Width / 100;
+                        int i = this.setting.TableHeader.ColumnsWidth.Length - 1;
+                        double sum = 0;
+                        while (sum < width)
+                        {
+                            sum += this.setting.TableHeader.ColumnsWidth[i].Width;
+                            i--;
+                        }
+                        colRight = i;
+                    }
+                }
+                else
+                    colRight = this.setting.TableHeader.ColumnsWidth.Length;
+                int rowCount = this.setting.Header.HeaderLeft.Count > this.setting.Header.HeaderRight.Count ? this.setting.Header.HeaderLeft.Count : this.setting.Header.HeaderRight.Count;
+                rowCount = rowCount > this.setting.Header.HeaderCenter.Count ? rowCount : this.setting.Header.HeaderCenter.Count;
+                this.headerCells = new List<ExcelCell>();
+                for (int i = 0; i < rowCount; i++)
+                {
+                    if (i < this.setting.Header.HeaderLeft.Count)
+                    {
+                        IXLCell cellDell = worksheet.Cell(this.row, 1);
+                        worksheet.Range(this.row, 1, this.row, colLeft).Row(1).Merge();
+                        cellDell.Value = this.setting.Header.HeaderLeft[i].Text;
+                        this.setting.Header.HeaderLeft[i].Style.GetStyle(cellDell.Style);
+                        this.headerCells.Add(new ExcelCell(cellDell, this.setting.Header.HeaderLeft[i].Style));
+                    }
+                    if (i < this.setting.Header.HeaderRight.Count)
+                    {
+                        IXLCell cellQuochieu = worksheet.Cell(this.row, colRight);
+                        cellQuochieu.Value = this.setting.Header.HeaderRight[i].Text;
+                        this.setting.Header.HeaderRight[i].Style.GetStyle(cellQuochieu.Style);
+                        worksheet.Range(this.row, colRight, this.row, colSum).Row(1).Merge();
+                        this.headerCells.Add(new ExcelCell(cellQuochieu, this.setting.Header.HeaderRight[i].Style));
+                    }
+                    if (i < this.setting.Header.HeaderCenter.Count)
+                    {
+                        IXLCell cellQuochieu = worksheet.Cell(this.row, colLeft == 1 ? colLeft : colLeft + 1);
+                        cellQuochieu.Value = this.setting.Header.HeaderCenter[i].Text;
+                        this.setting.Header.HeaderCenter[i].Style.GetStyle(cellQuochieu.Style);
+                        worksheet.Range(this.row, colLeft == 1 ? colLeft : colLeft + 1, this.row, colRight).Row(1).Merge();
+                        this.headerCells.Add(new ExcelCell(cellQuochieu, this.setting.Header.HeaderCenter[i].Style));
+                    }
+                    this.row++;
+                }
+            }
+            catch (Exception e)
+            {
+                //Common.log.Error("Set header", e);
+            }
+        }
+
+        protected override void SetSubHeader()
+        {
+            try
+            {
+                int colLeft = Convert.ToInt32(setting.TableHeader.ColumnsWidth.Length / 2);
+                int colSum = setting.TableHeader.ColumnsWidth.Length;
+                int rowCount = this.setting.Header.SubHeaderLeft.Count > this.setting.Header.SubHeaderRight.Count ? this.setting.Header.SubHeaderLeft.Count : this.setting.Header.SubHeaderRight.Count;
+                if (this.headerCells == null || this.headerCells.Count == 0)
+                {
+                    this.headerCells = new List<ExcelCell>();
+                }
+                for (int i = 0; i < rowCount; i++)
+                {
+                    if (i < this.setting.Header.SubHeaderLeft.Count)
+                    {
+                        IXLCell cellDell = worksheet.Cell(this.row, 1);
+                        worksheet.Range(this.row, 1, this.row, colLeft).Row(1).Merge();
+                        cellDell.Value = this.setting.Header.HeaderLeft[i].Text;
+                        this.setting.Header.HeaderLeft[i].Style.GetStyle(cellDell.Style);
+                        this.headerCells.Add(new ExcelCell(cellDell, this.setting.Header.SubHeaderLeft[i].Style));
+                    }
+                    if (i < this.setting.Header.SubHeaderRight.Count)
+                    {
+                        IXLCell cellQuochieu = worksheet.Cell(this.row, colLeft + 1);
+                        cellQuochieu.Value = this.setting.Header.HeaderRight[i].Text;
+                        this.setting.Header.HeaderRight[i].Style.GetStyle(cellQuochieu.Style);
+                        worksheet.Range(this.row, colLeft + 1, this.row, colSum).Row(1).Merge();
+                        this.headerCells.Add(new ExcelCell(cellQuochieu, this.setting.Header.SubHeaderRight[i].Style));
+                    }
+                    this.row++;
+                }
+            }
+            catch (Exception e)
+            {
+                //Common.log.Error("Set subHeader", e);
+            }
+
+        }
+
+        protected override void SetTitle()
+        {
+            try
+            {
+                int rowTitle = this.row + 1;
+                if (this.setting.Title.Title.Text != null && this.setting.Title.Title.Text != "")
+                {
+                    int colSum = setting.TableHeader.ColumnsWidth.Length;
+
+                    var titleCell = worksheet.Cell(rowTitle, 1);
+                    this.titleCell = new ExcelCell(titleCell, this.setting.Title.Title.Style);
+                    titleCell.Value = this.setting.Title.Title.Text == null ? "" : this.setting.Title.Title.Text.ToUpper();
+                    this.setting.Title.Title.Style.GetStyle(titleCell.Style);
+                    worksheet.Range(rowTitle, 1, rowTitle, colSum).Row(1).Merge();
+                    this.row = rowTitle++;
+                }
+
+            }
+            catch (Exception e)
+            {
+                //Common.log.Error("Set title", e);
+            }
+
+        }
+
+        private int SetGroupcolumns(IXLWorksheet sheet, ExcelColumnContent column, int row, int col, int rowSum)
+        {
+            if (column.isGroup)
+            {
+                var cellGroup = sheet.Cell(row + column.level, col);
+                this.setting.TableHeader.Style.GetStyle(cellGroup.Style);
+                cellGroup.Value = column.Caption;
+                cellGroup.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                int groupCol = col + column.GetCountColumn() - 1;
+                sheet.Range(row + column.level, col, row + column.level, groupCol).Row(1).Merge();
+                List<ExcelColumnContent> cols = column.GetColumns();
+                foreach (var item in cols)
+                {
+                    int rowgroup = item.isGroup ? row + column.level - 1 : row + column.level;
+                    col = this.SetGroupcolumns(sheet, item, row, col, rowSum);
+                }
+            }
+            else
+            {
+                var cellDetail = sheet.Cell(row + column.level, col);
+                this.setting.TableHeader.Style.GetStyle(cellDetail.Style);
+                cellDetail.Value = column.Caption;
+                cellDetail.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                cellDetail.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+                sheet.Range(row + column.level, col, (row + rowSum), col).Column(1).Merge();
+                col++;
+            }
+            return col;
+        }
+
+        protected override void SetSubTitle()
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(this.setting.Title.SubTitle.Text) && !string.IsNullOrWhiteSpace(this.setting.Title.SubTitle.Text))
+                {
+
+                    int colSum = setting.TableHeader.ColumnsWidth.Length;
+                    int rowTitle = this.row + 1;
+                    var titleCell = worksheet.Cell(rowTitle, 1);
+                    this.subTitleCell = new ExcelCell(titleCell, this.setting.Title.SubTitle.Style);
+                    titleCell.Value = this.setting.Title.SubTitle.Text == null ? "" : this.setting.Title.SubTitle.Text;
+                    this.setting.Title.SubTitle.Style.GetStyle(titleCell.Style);
+                    worksheet.Range(rowTitle, 1, rowTitle, colSum).Row(1).Merge();
+                    this.row = rowTitle + 1;
+                }
+            }
+            catch (Exception e)
+            {
+                //Common.log.Error("Set subtitle", e);
+            }
+        }
+
+        protected override void SetContent()
+        {
+            try
+            {
+
+                if (this.setting.DataSource == null)
+                {
+                    throw new NullReferenceException("Bạn chưa thiết lập dữ liệu");
+                }
+                else if (this.setting.TableHeader.ColumnsWidth.Length > 0)
+                {
+                    int col = 1;
+                    var tag = worksheet.Cell(row, col).InsertData(this.setting.DataSource.AsEnumerable());
+                    //if (this.setting.Content.AdjustToContent)
+                    //{
+                    //    worksheet.Columns(1, this.setting.DataSource.Columns.Count).AdjustToContents();
+                    //}
+
+                    tag.Style.Font.FontSize = this.styleBase.FontSize;
+                    tag.Style.Font.FontName = this.styleBase.FontName;
+                    if (this.setting.DataSource.Rows.Count > 0)
+                    {
+                        this.tableRange.RangeAddress.LastAddress = tag.RangeAddress.LastAddress;
+                        this.row = tag.RangeAddress.LastAddress.RowNumber + 1;
+
+                    }
+                    else
+                    {
+                        this.row++;
+                    }
+                }
+                else
+                {
+                    this.row++;
+                }
+            }
+            catch (Exception e)
+            {
+                //Common.log.Error("Set content", e);
+            }
+        }
+
+        protected override void SetSignature()
+        {
+            try
+            {
+                int colSum = setting.TableHeader.ColumnsWidth.Length;
+                int colLeft = 1;
+                double sum = 0;
+                int j = 0;
+                int colRight = colSum - 1;
+                if (this.setting.Signature.SignatureLeft.Count > 0)
+                {
+                    double width = this.GetWidthOfText(this.setting.Signature.SignatureLeft.OrderByDescending(p => p.Text.Length).FirstOrDefault().Text);
+                    while (sum < width)
+                    {
+                        sum += this.setting.TableHeader.ColumnsWidth[j].Width;
+                        j++;
+                    }
+                    colLeft = j + 1;
+                }
+                sum = 0;
+                j = this.setting.TableHeader.ColumnsWidth.Length - 1;
+                if (this.setting.Signature.SignatureRight.Count > 0)
+                {
+                    string text = this.setting.Signature.SignatureRight.OrderByDescending(p => p.Text.Length).FirstOrDefault().Text;
+                    double width = this.GetWidthOfText(text);
+                    while (sum < width)
+                    {
+                        sum += this.setting.TableHeader.ColumnsWidth[j].Width;
+                        j--;
+                    }
+                    colRight = j + 1;
+                }
+                colLeft = colLeft == 1 ? 2 : colLeft;
+
+
+                int rowCount = this.setting.Signature.SignatureLeft.Count > this.setting.Signature.SignatureRight.Count ? this.setting.Signature.SignatureLeft.Count : this.setting.Signature.SignatureRight.Count;
+                rowCount = rowCount > this.setting.Signature.SignatureCenter.Count ? rowCount : this.setting.Signature.SignatureCenter.Count;
+                this.row++;
+                for (int i = 0; i < rowCount; i++)
+                {
+                    if (i < this.setting.Signature.SignatureLeft.Count)
+                    {
+                        IXLCell cellDell = worksheet.Cell(this.row, colLeft);
+                        //worksheet.Range(this.row, 1, this.row, colLeft).Row(1).Merge();
+                        cellDell.Value = this.setting.Signature.SignatureLeft[i].Text;
+                        //this.setting.Signature.SignatureLeft[i].Style.GetStyle(cellDell.Style);
+                        //this.headerCells.Add(new ExcelCell(cellDell, this.setting.Header.HeaderLeft[i].Style));
+                    }
+                    if (i < this.setting.Signature.SignatureRight.Count)
+                    {
+                        IXLCell cellQuochieu = worksheet.Cell(this.row, colRight - 1 + (colSum - colRight + 1) / 2);
+                        cellQuochieu.Value = this.setting.Signature.SignatureRight[i].Text;
+                        this.setting.Signature.SignatureRight[i].Style.GetStyle(cellQuochieu.Style);
+                        //worksheet.Range(this.row, colRight, this.row, colSum).Row(1).Merge();
+                        //this.headerCells.Add(new ExcelCell(cellQuochieu, this.setting.Header.HeaderRight[i].Style));
+                    }
+                    if (i < this.setting.Signature.SignatureCenter.Count)
+                    {
+                        IXLCell cellQuochieu = worksheet.Cell(this.row, colLeft == 1 ? colLeft : colLeft + 1);
+                        cellQuochieu.Value = this.setting.Signature.SignatureCenter[i].Text;
+                        this.setting.Signature.SignatureCenter[i].Style.GetStyle(cellQuochieu.Style);
+                        //worksheet.Range(this.row, colLeft + 1, this.row, colRight-1).Row(1).Merge();
+                        //this.headerCells.Add(new ExcelCell(cellQuochieu, this.setting.Header.HeaderRight[i].Style));
+                        //worksheet.Range(this.row, colLeft == 1 ? colLeft : colLeft + 1, this.row, colRight).Row(1).Merge();
+                        //this.headerCells.Add(new ExcelCell(cellQuochieu, this.setting.Signature.SignatureCenter[i].Style));
+                    }
+                    this.row++;
+                }
+            }
+            catch (Exception e)
+            {
+                //Common.log.Error("error: FOOTER", e);
+            }
+        }
+
+        protected ExcelColumnCollection GetColumnFromDataTable(DataTable dt)
+        {
+            ExcelColumnCollection collection = new ExcelColumnCollection();
+            if (this.setting.TableHeader.ColumnsWidth == null)
+            {
+                if (this.setting.DataSource != null)
+                {
+                    foreach (DataColumn col in this.setting.DataSource.Columns)
+                    {
+                        collection.AddColumn(new ExcelColumnContent(col.ColumnName, col.Caption));
+                    }
+                    this.setting.TableHeader.ColumnCollection = collection;
+                    this.setting.TableHeader.ColumnsWidth = collection.GetColumns().ToArray();
+                }
+
+            }
+            else if (this.setting.TableHeader.ColumnsWidth.Length == 0)
+            {
+                if (this.setting.DataSource != null)
+                {
+                    foreach (DataColumn col in this.setting.DataSource.Columns)
+                    {
+                        collection.AddColumn(new ExcelColumnContent(col.ColumnName, col.Caption));
+                    }
+                    this.setting.TableHeader.ColumnCollection = collection;
+                    this.setting.TableHeader.ColumnsWidth = collection.GetColumns().ToArray();
+                }
+            }
+            return collection;
+        }
+
+        protected override double SetWidthPage()
+        {
+            this.GetColumnFromDataTable(this.setting.DataSource);
+            int colsum = this.setting.TableHeader.ColumnsWidth != null ? this.setting.TableHeader.ColumnsWidth.Length : this.setting.DataSource != null ? this.setting.DataSource.Columns.Count : 0;
+            double width = this.setting.PageSetup.PageOrientation == XLPageOrientation.Landscape ? 128 : 85;
+            this.setting.TableHeader.ColumnsWidth.Where(p => p.Width == 0).ForEach(p => p.SetWidth(width / colsum));
+            this.PageWidth = this.setting.TableHeader.ColumnsWidth.Sum(p => p.Width);
+            return this.PageWidth;
+        }
+
+        protected override void SetTableheader()
+        {
+            try
+            {
+                if (this.setting.DataSource == null)
+                {
+                    throw new NullReferenceException("Bạn chưa thiết lập danh sách dữ liệu");
+                }
+                else
+                {
+                    row += 1;
+                    int col = 1;
+                    this.tableRange = worksheet.Range(this.row + 1, 1, this.row + setting.TableHeader.ColumnCollection.Level, setting.TableHeader.ColumnsWidth.Length);
+                    foreach (var item in setting.TableHeader.ColumnCollection.Columns)
+                    {
+                        col = this.SetGroupcolumns(this.worksheet, item, row, col, setting.TableHeader.ColumnCollection.Level);
+                    }
+                    if (this.setting.TableHeader.ColumnsWidth != null)
+                    {
+                        this.RefreshAlignmentHeader();
+                    }
+                    this.tableRange.Style.Alignment.SetWrapText(true);
+                    //if (!this.setting.Content.AdjustToContent)
+                    //{
+                    //    //tự động điều chỉnh độ rộng theo nôi dung
+                    //    worksheet.Columns(1, this.setting.TableHeader.ColumnsWidth.Length).AdjustToContents();
+                    //}
+                    //else
+                    //{
+                    //    //thiết lập độ rộng theo width chỉ định của cột đó, nếu không thiết lập độ rộng của cột thì cột tự động căn chỉnh theo nội dung
+                    //    for (int i = 1; i <= this.setting.TableHeader.ColumnsWidth.Length; i++)
+                    //    {
+                    //        if(this.setting.TableHeader.ColumnsWidth[i - 1].Width == 0 || this.setting.TableHeader.ColumnsWidth[i - 1].AdjustToContent)
+                    //        {
+                    //            worksheet.Column(i).AdjustToContents(); 
+                    //        }
+                    //        else
+                    //        {
+                    //            worksheet.Column(i).Width = this.setting.TableHeader.ColumnsWidth[i - 1].Width;
+                    //        }
+
+                    //    }
+                    //}
+                    row = row + 1 + setting.TableHeader.ColumnCollection.Level;
+                }
+            }
+            catch (Exception)
+            {
+
+            }
+        }
+
+        protected override void SetContentWidth()
+        {
+            if (this.setting.Content.AdjustToContent)
+            {
+                //tự động điều chỉnh độ rộng theo nôi dung
+                worksheet.Columns(1, this.setting.TableHeader.ColumnsWidth.Length).AdjustToContents();
+            }
+            else
+            {
+                //thiết lập độ rộng theo width chỉ định của cột đó, nếu không thiết lập độ rộng của cột thì cột tự động căn chỉnh theo nội dung
+                for (int i = 1; i <= this.setting.TableHeader.ColumnsWidth.Length; i++)
+                {
+                    if (this.setting.TableHeader.ColumnsWidth[i - 1].Width == 0 || this.setting.TableHeader.ColumnsWidth[i - 1].AdjustToContent)
+                    {
+                        worksheet.Column(i).AdjustToContents();
+                    }
+                    else
+                    {
+                        worksheet.Column(i).Width = this.setting.TableHeader.ColumnsWidth[i - 1].Width;
+                    }
+
+                }
+            }
+        }
+
+        protected void SetTableheader_Old()
+        {
+            try
+            {
+                //int colsum = this.setting.TableHeader.ColumnsWidth.Length;
+                //double width = this.setting.PageSetup.PageOrientation == XLPageOrientation.Landscape ? 128 : 85;
+                //this.setting.TableHeader.ColumnsWidth.Where(p => p.Width <= 0).ForEach(p => p.Width = width / colsum);
+                if (this.setting.DataSource == null)
+                {
+                    throw new NullReferenceException("Bạn chưa thiết lập danh sách dữ liệu");
+                }
+                else
+                {
+                    //if (this.setting.TableHeader.ColumnsWidth.Length != this.setting.DataSource.Columns.Count)
+                    //{
+                    //    throw new ArgumentOutOfRangeException("Số lượng cột thiết lập không trùng với dataSource");
+                    //}
+                    row += 2;
+                    this.tableRange = worksheet.Range(this.row, 1, this.row, setting.TableHeader.ColumnsWidth.Length);
+                    int col = 1;
+                    foreach (ExcelColumnContent datacol in setting.TableHeader.ColumnsWidth)
+                    {
+                        IXLCell cell = worksheet.Cell(row, col);
+                        this.setting.TableHeader.Style.GetStyle(cell.Style);
+                        if (this.setting.TableHeader.ColumnsWidth == null)
+                        {
+                            cell.Value = datacol.Caption;
+                        }
+                        else
+                        {
+                            string name = this.setting.TableHeader.ColumnsWidth[col - 1].Caption;
+                            worksheet.Cell(row, col).Value = (!string.IsNullOrEmpty(name) && !string.IsNullOrWhiteSpace(name)) ? name : datacol.Caption;
+                            worksheet.Column(col).Width = this.setting.TableHeader.ColumnsWidth[col - 1].Width == 0 ? 8 : this.setting.TableHeader.ColumnsWidth[col - 1].Width;
+                            //cell.Style.Alignment.Horizontal = this.setting.TableHeader.Style.Horizontal;
+                        }
+                        col++;
+                    }
+                    if (this.setting.TableHeader.ColumnsWidth != null)
+                    {
+                        this.RefreshAlignmentHeader();
+                    }
+                    this.row++;
+                }
+            }
+            catch (Exception e)
+            {
+                //Common.log.Error("Set tableHeader", e);
+            }
+
+        }
+
+        protected override void RefreshAlignmentHeader()
+        {
+            foreach (var item in this.headerCells)
+            {
+                item.Style.GetStyle(item.Cell.Style);
+            }
+            if (this.titleCell != null)
+                this.titleCell.Cell.Style.Alignment.Horizontal = this.titleCell.Style.Horizontal;
+
+            if (this.subTitleCell != null) this.subTitleCell.Cell.Style.Alignment.Horizontal = this.subTitleCell.Style.Horizontal;
+        }
+
+        protected override void SetBorderContent()
+        {
+            try
+            {
+                if (this.tableRange != null)
+                {
+                    tableRange.Cells().Style.Alignment.SetWrapText(this.setting.Content.WrapText);
+                    this.tableRange.Style.Border.BottomBorder = this.setting.Content.BorderStyle;
+                    this.tableRange.Style.Border.TopBorder = this.setting.Content.BorderStyle;
+                    this.tableRange.Style.Border.LeftBorder = this.setting.Content.BorderStyle;
+                    this.tableRange.Style.Border.RightBorder = this.setting.Content.BorderStyle;
+                }
+            }
+            catch (Exception e)
+            {
+                //Common.log.Error("Set border table", e);
+            }
+
+        }
+    }
+
+    /// <summary>
+    /// Worksheet template
+    /// </summary>
+    public abstract class IWorksheetTemplate
+    {
+        protected string name;
+        protected WorksheetConfig setting;
+        protected IXLWorksheet worksheet;
+        protected int row = 1;
+        protected int totalColumns = 0;
+        protected List<ExcelCell> headerCells = new List<ExcelCell>();
+        protected IXLRange tableRange;
+        protected ExcelCell titleCell;
+        protected ExcelCell subTitleCell;
+        protected IXLCell cellSubtitle;
+
+        public IWorksheetTemplate() { }
+        public IWorksheetTemplate(WorksheetConfig sheetSetting)
+        {
+            this.setting = sheetSetting;
+            this.name = sheetSetting.Name;
+            if (this.setting.DataSource != null)
+            {
+                this.totalColumns = this.setting.DataSource.Columns.Count;
+            }
+        }
+
+        public void SetWorksheet(IXLWorksheet sheet)
+        {
+            this.worksheet = sheet;
+        }
+
+        public string Name
+        {
+            get { return name; }
+            set { name = value; }
+        }
+        public WorksheetConfig Setting
+        {
+            get { return setting; }
+            set { setting = value; }
+        }
+        public IXLWorksheet GetTemplate()
+        {
+            try
+            {
+                this.SetPage();
+                this.SetStyle();
+                this.SetWidthPage();
+                this.SetHeader();
+                this.SetSubHeader();
+                this.SetTitle();
+                this.SetSubTitle();
+                this.SetTableheader();
+                this.SetContent();
+                this.SetContentWidth();
+                this.RefreshAlignmentHeader();
+                this.SetBorderContent();
+                this.SetSignature();
+            }
+            catch (Exception e)
+            {
+                //Common.log.Error("Get Template", e);
+            }
+
+            return this.worksheet;
+        }
+        public virtual IXLWorksheet GetTemplate(IXLWorksheet sheet)
+        {
+            try
+            {
+                this.worksheet = sheet;
+                this.SetPage();
+                this.SetStyle();
+                this.SetWidthPage();
+                this.SetHeader();
+                this.SetSubHeader();
+                this.SetTitle();
+                this.SetSubTitle();
+                this.SetTableheader();
+                this.SetContent();
+                this.SetContentWidth();
+                this.RefreshAlignmentHeader();
+                this.SetBorderContent();
+                this.SetSignature();
+            }
+            catch (Exception e)
+            {
+                //Common.log.Error("Get template from worksheet", e);
+            }
+            return this.worksheet;
+        }
+        protected abstract double SetWidthPage();
+        protected abstract void SetPage();
+        protected abstract void SetStyle();
+        protected abstract void SetHeader();
+        protected abstract void SetSubHeader();
+        protected abstract void SetTitle();
+        protected abstract void SetSubTitle();
+        protected abstract void SetTableheader();
+        protected abstract void SetContentWidth();
+        protected abstract void SetContent();
+        protected abstract void SetBorderContent();
+        protected abstract void RefreshAlignmentHeader();
+        protected abstract void SetSignature();
+        protected double GetWidthOfText(string text)
+        {
+            //set font, size & style
+            Font f = new Font(this.setting.Style.FontName, (float)this.setting.Style.FontSize, FontStyle.Regular);
+
+            //create a bmp / graphic to use MeasureString on
+            Bitmap b = new Bitmap(2200, 2200);
+            Graphics g = Graphics.FromImage(b);
+
+            //measure the string
+            SizeF sizeOfString = new SizeF();
+            sizeOfString = g.MeasureString(text, f);
+            return sizeOfString.Width / 12; ;
+        }
+
+    }
+    public class WorkbookFromTemplate
+    {
+        private string filePathTemplate;
+        XLWorkbook workbook;
+        private string filename;
+        DataSet dataSet;
+        public void SetFileName(string name)
+        {
+            this.filename = name;
+        }
+        public WorkbookFromTemplate(string filePathTemplate)
+        {
+            this.filePathTemplate = filePathTemplate;
+        }
+
+        public void SetDataSet(DataSet ds)
+        {
+            this.dataSet = ds;
+        }
+
+        public bool Export()
+        {
+            if (File.Exists(this.filePathTemplate))
+            {
+                try
+                {
+                    using (this.workbook = new XLWorkbook(this.filePathTemplate))
+                    {
+                        DataTable dt = dataSet.Tables[0];
+                        DataTable dt2 = dataSet.Tables[1];
+                        int countSum = this.workbook.Worksheets.Count < this.dataSet.Tables.Count ? this.workbook.Worksheets.Count : this.dataSet.Tables.Count;
+                        for (int i = 0; i < countSum; i++)
+                        {
+                            WorksheetConfig config = new WorksheetConfig();
+                            config.DataSource = dataSet.Tables[i];
+                            SheetFromTemplateLayout layout = new SheetFromTemplateLayout(config);
+                            layout.SetStartRow(8);
+                            var sheet = this.workbook.Worksheet(i + 1);
+                            sheet = layout.GetTemplate(sheet);
+                        }
+                        this.Response();
+                        return true;
+                    }
+                }
+                catch (Exception e)
+                {
+                    //Common.log.Error("Lỗi: ", e);
+                    return false;
+                }
+
+            }
+            else
+                return false;
+        }
+
+        //private void SetThamsoChoTrangDuLieu(IXLWorksheet sheet)
+        //{
+        //    int rowUsed = sheet.LastRowUsed().RangeAddress.LastAddress.RowNumber;
+        //    for (int j = 1; j < rowUsed; j++)
+        //    {
+        //        for (int i = 1; i <= 15; i++)
+        //        {
+        //            object text = sheet.Cell(j, i).Value;
+        //            string newValue = "";
+        //            if (text != null && !string.IsNullOrEmpty(text.ToString()) && !string.IsNullOrWhiteSpace(text.ToString()))
+        //            {
+        //                newValue = this.GetValueForParam(text.ToString());
+        //                sheet.Cell(j, i).Value = newValue;
+        //            }
+        //        }
+        //    }
+
+        //}
+
+        //private string GetValueForParam(string text)
+        //{
+        //    if (text.Contains("{namhoc}"))
+        //    {
+        //        text = text.Replace("{namhoc}", this.namhoc);
+        //    }
+        //    if (text.Contains("{donvi}"))
+        //    {
+        //        text = text.Replace("{donvi}", "Quận 1".ToUpper());
+        //    }
+        //    if (text.Contains("{ngaythang}"))
+        //    {
+        //        text = text.Replace("{ngaythang}", string.Format("Ngày {0} tháng {1} năm {2}", DateTime.Now.Day, DateTime.Now.Month, DateTime.Now.Year));
+        //    }
+        //    return text;
+        //}
+
+        protected virtual void Response()
+        {
+            HttpResponse _response = HttpContext.Current.Response;
+            _response.ClearContent();
+            _response.Buffer = true;
+            _response.AddHeader("content-disposition", string.Format("attachment; filename={0}.xlsx", this.filename ?? (Guid.NewGuid()).ToString()));
+            _response.ContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            _response.Charset = "";
+            using (MemoryStream MyMemoryStream = new MemoryStream())
+            {
+                workbook.SaveAs(MyMemoryStream);
+                MyMemoryStream.WriteTo(_response.OutputStream);
+                _response.Flush();
+                _response.End();
+            }
+        }
+
+    }
+    public class SheetFromTemplateLayout : WorksheetTemplateBase
+    {
+        private int startRow = 0;
+        public void SetStartRow(int startRow)
+        {
+            this.startRow = startRow;
+        }
+        public SheetFromTemplateLayout()
+        {
+        }
+
+        public SheetFromTemplateLayout(WorksheetConfig sheetSetting) : base(sheetSetting)
+        {
+        }
+
+        protected override void RefreshAlignmentHeader()
+        {
+
+        }
+
+        protected override void SetBorderContent()
+        {
+
+        }
+
+
+        protected override void SetContent()
+        {
+            if (this.Setting.DataSource != null)
+            {
+                this.worksheet.Range(this.startRow, 1, this.startRow, this.setting.DataSource.Columns.Count).InsertRowsBelow(this.setting.DataSource.Rows.Count);
+                for (int i = 0; i < this.setting.DataSource.Rows.Count; i++)
+                {
+                    for (int j = 0; j < this.setting.DataSource.Columns.Count; j++)
+                    {
+                        var cell = this.worksheet.Cell(startRow + i, j + 1);
+                        DataColumn col = this.setting.DataSource.Columns[j];
+                        switch (Type.GetTypeCode(col.DataType))
+                        {
+                            case TypeCode.Boolean:
+                                cell.Value = this.setting.DataSource.Rows[i][j];
+                                break;
+                            case TypeCode.DateTime:
+                                cell.Value = this.setting.DataSource.Rows[i][j] == null ? "" : Convert.ToDateTime(this.setting.DataSource.Rows[i][j]).ToString("dd/MM/yyyy");
+                                cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+                                break;
+                            default:
+                                cell.Value = this.setting.DataSource.Rows[i][j];
+                                break;
+                        }
+                    }
+                }
+
+                var rangeTable = this.worksheet.Range(this.startRow, 1, this.startRow + this.Setting.DataSource.Rows.Count - 1, this.setting.DataSource.Columns.Count);
+                rangeTable.Style.Border.TopBorder = XLBorderStyleValues.Thin;
+                rangeTable.Style.Border.BottomBorder = XLBorderStyleValues.Thin;
+                rangeTable.Style.Border.LeftBorder = XLBorderStyleValues.Thin;
+                rangeTable.Style.Border.RightBorder = XLBorderStyleValues.Thin;
+            }
+        }
+
+        protected override void SetHeader()
+        {
+
+        }
+
+        protected override void SetPage()
+        {
+
+        }
+
+        protected override void SetSignature()
+        {
+
+        }
+
+        protected override void SetStyle()
+        {
+
+        }
+
+        protected override void SetSubHeader()
+        {
+
+        }
+
+        protected override void SetSubTitle()
+        {
+
+        }
+
+        protected override void SetTableheader()
+        {
+
+        }
+
+        protected override void SetTitle()
+        {
+
+        }
+    }
+    public class WorksheetConfig : ICloneable
+    {
+        public WorksheetConfig()
+        {
+            this.Header = new HeaderComponent();
+            this.Title = new TitleComponent();
+            this.TableHeader = new TableHeaderComponent();
+            this.Content = new ContentComponent();
+            this.Signature = new SignatureComponent();
+            this.PageSetup = XLWorkbook.DefaultPageOptions;
+            this.Style = new ExcelStyle();
+        }
+
+        public string Name { get; set; }
+        public HeaderComponent Header { get; set; }
+        public TitleComponent Title { get; set; }
+        public TableHeaderComponent TableHeader { get; set; }
+        public ContentComponent Content { get; set; }
+        public SignatureComponent Signature { get; set; }
+        public IXLPageSetup PageSetup { get; set; }
+        public ExcelStyle Style { get; set; }
+        public bool ShowGridLine { get; set; }
+        public DataTable DataSource { get; set; }
+        public WorksheetConfig Clone(WorksheetConfig setting)
+        {
+            var serialized = JsonConvert.SerializeObject(setting);
+            return JsonConvert.DeserializeObject<WorksheetConfig>(serialized);
+        }
+
+        object ICloneable.Clone()
+        {
+            throw new NotImplementedException();
+        }
+    }
+
+    public class ExcelStyle : ICloneable
+    {
+        public ExcelStyle()
+        {
+            this.BackgroundColor = Color.White;
+            this.FontColor = Color.Black;
+            this.FontName = "Times New Roman";
+            this.FontSize = 12;
+            this.Underline = XLFontUnderlineValues.None;
+            this.BottomBorder = XLBorderStyleValues.None;
+            this.LeftBorder = XLBorderStyleValues.None;
+            this.RightBorder = XLBorderStyleValues.None;
+            this.TopBorder = XLBorderStyleValues.None;
+        }
+        public XLAlignmentHorizontalValues Horizontal { get; set; }
+        public XLAlignmentVerticalValues Vertical { get; set; }
+        public XLBorderStyleValues BottomBorder { get; set; }
+        public XLBorderStyleValues LeftBorder { get; set; }
+        public XLBorderStyleValues RightBorder { get; set; }
+        public XLBorderStyleValues TopBorder { get; set; }
+        public Color BackgroundColor { get; set; }
+        public bool Bold { get; set; }
+        public Color FontColor { get; set; }
+        public string FontName { get; set; }
+        public double FontSize { get; set; }
+        public bool Italic { get; set; }
+        public bool Strikethrough { get; set; }
+        public XLFontUnderlineValues Underline { get; set; }
+
+        public IXLStyle GetStyle(IXLStyle Style)
+        {
+            Style.Alignment.Horizontal = this.Horizontal;
+            Style.Alignment.Vertical = this.Vertical;
+            Style.Border.BottomBorder = this.BottomBorder;
+            Style.Border.TopBorder = this.TopBorder;
+            Style.Border.LeftBorder = this.LeftBorder;
+            Style.Border.RightBorder = this.RightBorder;
+            //Style.Fill.BackgroundColor = XLColor.FromColor(this.BackgroundColor);
+            Style.Font.Bold = this.Bold;
+            Style.Font.FontColor = XLColor.FromColor(this.FontColor);
+            Style.Font.FontName = this.FontName;
+            Style.Font.FontSize = this.FontSize;
+            Style.Font.Italic = this.Italic;
+            Style.Font.Strikethrough = this.Strikethrough;
+            Style.Font.Underline = this.Underline;
+            return Style;
+        }
+
+        public ExcelStyle Clone()
+        {
+            return (ExcelStyle)this.MemberwiseClone();
+        }
+        object ICloneable.Clone()
+        {
+            return Clone();
+        }
+
+    }
+
+    public class HeaderComponent : ICloneable
+    {
+        public HeaderComponent()
+        {
+            this.HeaderLeft = new List<TextComponent>();
+            this.HeaderRight = new List<TextComponent>();
+            this.SubHeaderRight = new List<TextComponent>();
+            this.SubHeaderLeft = new List<TextComponent>();
+            this.HeaderCenter = new List<TextComponent>();
+        }
+        public List<TextComponent> HeaderLeft { get; set; }
+        public List<TextComponent> HeaderCenter { get; set; }
+        public List<TextComponent> HeaderRight { get; set; }
+        public List<TextComponent> SubHeaderRight { get; set; }
+        public List<TextComponent> SubHeaderLeft { get; set; }
+        public HeaderComponent Clone()
+        {
+            return (HeaderComponent)this.MemberwiseClone();
+        }
+
+        object ICloneable.Clone()
+        {
+            return Clone();
+        }
+    }
+
+    public class TableHeaderComponent : ICloneable
+    {
+        public TableHeaderComponent()
+        {
+            Style = new ExcelStyle();
+        }
+        public ExcelStyle Style { get; set; }
+        public ExcelColumnContent[] ColumnsWidth { get; set; }
+        public ExcelColumnCollection ColumnCollection { get; set; }
+        public TableHeaderComponent Clone()
+        {
+            return (TableHeaderComponent)this.MemberwiseClone();
+        }
+
+        object ICloneable.Clone()
+        {
+            return Clone();
+        }
+    }
+
+    public class ContentComponent : ICloneable
+    {
+        public ContentComponent()
+        {
+            BorderStyle = XLBorderStyleValues.Thin;
+        }
+        public XLBorderStyleValues BorderStyle { get; set; }
+        public bool WrapText { get; set; }
+        public bool AdjustToContent { get; set; }
+        public ContentComponent Clone()
+        {
+            return (ContentComponent)this.MemberwiseClone();
+        }
+
+        object ICloneable.Clone()
+        {
+            return Clone();
+        }
+    }
+    public class SignatureComponent : ICloneable
+    {
+        public SignatureComponent()
+        {
+            this.SignatureLeft = new List<TextComponent>();
+            this.SignatureRight = new List<TextComponent>();
+            this.SignatureCenter = new List<TextComponent>();
+        }
+        public List<TextComponent> SignatureLeft { get; set; }
+        public List<TextComponent> SignatureRight { get; set; }
+        public List<TextComponent> SignatureCenter { get; set; }
+        public SignatureComponent Clone()
+        {
+            return (SignatureComponent)this.MemberwiseClone();
+        }
+
+        object ICloneable.Clone()
+        {
+            return Clone();
+        }
+    }
+    public class TitleComponent : ICloneable
+    {
+        public TitleComponent()
+        {
+            this.Title = new TextComponent();
+            this.SubTitle = new TextComponent();
+        }
+        public TextComponent Title { get; set; }
+        public TextComponent SubTitle { get; set; }
+        public TitleComponent Clone()
+        {
+            return (TitleComponent)this.MemberwiseClone();
+        }
+
+        object ICloneable.Clone()
+        {
+            return Clone();
+        }
+    }
+    public class TextComponent : ICloneable
+    {
+        public TextComponent()
+        {
+            this.Style = new ExcelStyle();
+        }
+        public string Text { get; set; }
+        public ExcelStyle Style { get; set; }
+        public double Width { get; set; }
+
+        public TextComponent Clone()
+        {
+            return (TextComponent)this.MemberwiseClone();
+        }
+
+        object ICloneable.Clone()
+        {
+            return Clone();
+        }
+    }
+    public class ExcelCell
+    {
+        public ExcelCell()
+        {
+            this.Style = new ExcelStyle();
+        }
+        public ExcelCell(IXLCell cell, ExcelStyle style)
+        {
+            this.Style = style;
+            this.Cell = cell;
+        }
+        public IXLCell Cell { get; set; }
+        public ExcelStyle Style { get; set; }
+    }
+    public class ExcelColumnContent
+    {
+        public ExcelColumnContent(string name)
+        {
+            this.Name = name;
+            this.Caption = name;
+
+        }
+        public ExcelColumnContent(string name, string caption) : this(name)
+        {
+            this.Caption = caption;
+        }
+        public ExcelColumnContent(string name, string caption, bool group) : this(name, caption)
+        {
+            this.isGroup = group;
+        }
+        public ExcelColumnContent(string name, string caption, double width) : this(name, caption)
+        {
+            this.SetWidth(width);
+        }
+
+        public int Index { get; set; }
+        public int level { get; set; }
+        private bool _adjustToContent = true;
+        public bool AdjustToContent
+        {
+            get
+            {
+                return this._adjustToContent;
+            }
+            set
+            {
+                this._adjustToContent = value;
+            }
+        }
+
+        public string Name { get; set; }
+
+        public bool isGroup { get; set; }
+
+        public List<ExcelColumnContent> Columns { get; protected set; }
+        private double _width;
+        public void SetWidth(double width)
+        {
+            this._width = width;
+            this._adjustToContent = false;
+        }
+        public double Width
+        {
+            get { return this._width; }
+            set
+            {
+                this._width = value;
+            }
+        }
+
+        public string Caption { get; set; }
+
+        public XLAlignmentHorizontalValues HorizontalAlignment { get; set; }
+
+        public ExcelColumnContent()
+        {
+            this.HorizontalAlignment = XLAlignmentHorizontalValues.Left;
+        }
+
+        public List<ExcelColumnContent> GetColumns()
+        {
+            if (isGroup && this.Columns.Count > 0)
+            {
+                return this.Columns;
+            }
+            else
+            {
+                return new List<ExcelColumnContent> { this };
+            }
+        }
+
+        public void AddColumn(ExcelColumnContent column)
+        {
+            if (this.Columns == null)
+                this.Columns = new List<ExcelColumnContent>();
+            //column.level = this.level + 1;
+            //column.HorizontalAlignment = XLAlignmentHorizontalValues.Center;
+            this.Columns.Add(column);
+
+            this.isGroup = true;
+        }
+
+        public void SetLevel(int level)
+        {
+            this.level = level;
+            if (this.Columns != null)
+            {
+                foreach (var item in this.Columns)
+                {
+                    if (item.isGroup == true)
+                    {
+                        item.level = this.level + 1;
+                        item.SetLevel(item.level);
+                    }
+                    else
+                    {
+                        item.level = level + 1;
+                    }
+
+                }
+            }
+        }
+
+        public int GetCountColumn()
+        {
+            return this.countColumnsInGroup(this);
+        }
+
+        private int countColumnsInGroup(ExcelColumnContent column)
+        {
+            int count = 0;
+            if (column.isGroup)
+            {
+                foreach (var item in column.Columns)
+                {
+                    count += this.countColumnsInGroup(item);
+                }
+                return count;
+            }
+            else
+            {
+                return 1;
+            }
+        }
+
+        public ExcelColumnContent FindItem(string name)
+        {
+            if (this.Name == name)
+            {
+                return this;
+            }
+            else if (this.isGroup)
+            {
+                ExcelColumnContent it = null;
+                foreach (var item in this.Columns)
+                {
+                    it = item.FindItem(name);
+                    if (it != null) break;
+                }
+                return it;
+            }
+            else return null;
+        }
+
+        public void Remove(ExcelColumnContent excelColumn)
+        {
+            if (this.Columns != null)
+            {
+                if (this.Columns.Any(p => p.Name == excelColumn.Name))
+                {
+                    this.Columns.Remove(excelColumn);
+                }
+                else
+                {
+                    foreach (var item in this.Columns)
+                    {
+                        item.Remove(excelColumn);
+                    }
+                }
+            }
+        }
+    }
+
+    public class ExcelColumnCollection
+    {
+        public ExcelColumnCollection()
+        {
+            if (this.Columns == null)
+                this.Columns = new List<ExcelColumnContent>();
+        }
+        protected int level = 1;
+
+        public ExcelColumnCollection Sort()
+        {
+            this.Columns = this.Columns.OrderBy(p => p.Index).ToList();
+            return this;
+        }
+
+        public List<ExcelColumnContent> Columns { get; protected set; }
+
+        public void AddColumn(ExcelColumnContent column)
+        {
+            if (this.Columns == null)
+                this.Columns = new List<ExcelColumnContent>();
+            //column.HorizontalAlignment = XLAlignmentHorizontalValues.Center;
+            int levelCol = this.GetLevel(column, 1);
+            if (levelCol > this.level) this.level = levelCol;
+            this.Columns.Add(column);
+            this.SetLevel();
+        }
+
+        private void SetLevel()
+        {
+            foreach (var item in this.Columns)
+            {
+                item.SetLevel(1);
+            }
+        }
+
+        public int Level
+        {
+            get { return this.level; }
+        }
+
+        protected int GetLevel(ExcelColumnContent column, int le)
+        {
+            if (!column.isGroup)
+            {
+                return le;
+            }
+            else
+            {
+                int level = Convert.ToInt32(le.ToString());
+                foreach (var item in column.Columns)
+                {
+                    int check = GetLevel(item, level);
+                    if (check > le) le = check;
+                }
+                return le + 1;
+            }
+
+        }
+
+        public List<ExcelColumnContent> GetColumns()
+        {
+            List<ExcelColumnContent> list = new List<ExcelColumnContent>();
+            foreach (var item in this.Columns)
+            {
+                list.AddRange(this.GetColumnOfColumn(item));
+            }
+            return list;
+        }
+
+        private List<ExcelColumnContent> GetColumnOfColumn(ExcelColumnContent column)
+        {
+            List<ExcelColumnContent> list = new List<ExcelColumnContent>();
+            if (!column.isGroup)
+            {
+                list.Add(column);
+            }
+            else
+            {
+                foreach (var item in column.Columns)
+                {
+                    list.AddRange(this.GetColumnOfColumn(item));
+                }
+            }
+            return list;
+        }
+
+        public void Remove(ExcelColumnContent excelColumn)
+        {
+            if (this.Columns.Any(p => p.Name == excelColumn.Name))
+            {
+                this.Columns.Remove(excelColumn);
+            }
+            else
+            {
+                foreach (var item in this.Columns)
+                {
+                    item.Remove(excelColumn);
+                }
+            }
+        }
+
+        public void Remove(string name)
+        {
+            ExcelColumnContent item1 = null;
+            foreach (var item in this.Columns)
+            {
+                item1 = item.FindItem(name);
+            }
+            if (item1 != null) this.Remove(item1);
+        }
+    }
+    public class ExcelCommon
+    {
+        public static ExcelColumnCollection GetColumnsValid(DataTable data, ExcelColumnCollection columns)
+        {
+            foreach (var item in columns.GetColumns())
+            {
+                if (!data.Columns.Contains(item.Name))
+                {
+                    columns.Remove(item);
+                }
+            }
+            return columns;
+        }
+
+        public static T DeepCopy<T>(T source)
+        {
+            var serialized = JsonConvert.SerializeObject(source);
+            return JsonConvert.DeserializeObject<T>(serialized);
+        }
+    }
+}
+
+
+#endregion
